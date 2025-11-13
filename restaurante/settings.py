@@ -11,6 +11,15 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+
+USE_MOCKS = os.getenv("USE_MOCKS", "True") == "True"  # déjalo True para la demo
+M3_WEBHOOK_SECRET = os.getenv("M3_WEBHOOK_SECRET", "dev-secret")
+
+# Si USE_MOCKS=True, apuntamos M1/M4 a los endpoints locales /mock
+M1_BASE_URL = os.getenv("M1_BASE_URL", "http://127.0.0.1:8000/mock")
+M4_BASE_URL = os.getenv("M4_BASE_URL", "http://127.0.0.1:8000/mock")
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     "rest_framework",
     "pedidos",
+    "mock",
 ]
 
 MIDDLEWARE = [
