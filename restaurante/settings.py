@@ -1,51 +1,53 @@
 """
 Django settings for restaurante project.
-Generado con Django 5.2.8 y preparado para despliegue (Render) y entorno local.
+Preparado para desarrollo local y despliegue en Render.
 """
 
 from pathlib import Path
 import os
 
-# --- Rutas base ---
+# ---------------------------------------------------------------------
+# Rutas base
+# ---------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# --- Helpers para variables de entorno ---
-def _list_env(name: str, default: str = "") -> list[str]:
-    """Lee una variable de entorno separada por comas y devuelve lista limpia."""
-    raw = os.getenv(name, default) or ""
-    return [s.strip() for s in raw.split(",") if s.strip()]
+# ---------------------------------------------------------------------
+# Helpers para variables de entorno
+# ---------------------------------------------------------------------
+def _list_env(name: str, default: str = ""):
+    """
+    Lee una variable de entorno separada por comas y devuelve una lista.
+    Ej: "a.com,b.com" -> ["a.com","b.com"]
+    """
+    v = os.getenv(name, default)
+    return [s.strip() for s in v.split(",") if s.strip()]
 
-def _bool_env(name: str, default: bool = False) -> bool:
-    val = os.getenv(name)
-    if val is None:
-        return default
-    return val.strip().lower() in {"1", "true", "yes", "on"}
+def _bool_env(name: str, default: str = "False"):
+    return os.getenv(name, default).lower() in {"1", "true", "yes", "on"}
 
-# --- Flags / Integraciones (M1/M4) ---
-USE_MOCKS = _bool_env("USE_MOCKS", True)  # déjalo True para la demo
+# ---------------------------------------------------------------------
+# Seguridad / Entorno
+# ---------------------------------------------------------------------
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")  # cambia en prod
+DEBUG = _bool_env("DEBUG", "True")
+
+# Local por defecto; en Render agrega tu dominio en Environment → ALLOWED_HOSTS
+ALLOWED_HOSTS = _list_env("ALLOWED_HOSTS", "127.0.0.1,localhost")
+CSRF_TRUSTED_ORIGINS = _list_env("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
+
+# ---------------------------------------------------------------------
+# Integraciones / Flags
+# ---------------------------------------------------------------------
+USE_MOCKS = _bool_env("USE_MOCKS", "True")  # True para demo
 M3_WEBHOOK_SECRET = os.getenv("M3_WEBHOOK_SECRET", "dev-secret")
 
-# Si USE_MOCKS=True, puedes apuntar M1/M4 a los endpoints locales /mock
+# Si usas mocks, estas URLs pueden ser locales o el mismo host en cloud
 M1_BASE_URL = os.getenv("M1_BASE_URL", "http://127.0.0.1:8000/mock")
 M4_BASE_URL = os.getenv("M4_BASE_URL", "http://127.0.0.1:8000/mock")
 
-# --- Seguridad / Entorno ---
-# ¡No hardcodear claves en producción!
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-DEBUG = _bool_env("DEBUG", True)
-
-# En local: 127.0.0.1,localhost
-# En Render: poner tu dominio exacto, ej: restaurant-gestor-de-pedidos.onrender.com
-ALLOWED_HOSTS = _list_env("ALLOWED_HOSTS", "127.0.0.1,localhost")
-# En Render usa https://<tu-dominio>
-CSRF_TRUSTED_ORIGINS = _list_env("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
-
-# Endurecimiento mínimo cuando no estamos en DEBUG
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
-
-# --- Apps ---
+# ---------------------------------------------------------------------
+# Apps
+# ---------------------------------------------------------------------
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -58,7 +60,9 @@ INSTALLED_APPS = [
     "mock",
 ]
 
-# --- Middleware ---
+# ---------------------------------------------------------------------
+# Middleware
+# ---------------------------------------------------------------------
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # estáticos en prod
@@ -72,7 +76,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "restaurante.urls"
 
-# --- Templates ---
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -90,26 +93,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "restaurante.wsgi.application"
 
-# --- DB: usar carpeta escribible en Render (/var/data) ---
-# Fallback local si no existe env.
-DEFAULT_SQLITE = str(BASE_DIR / "db.sqlite3")
-SQLITE_PATH = os.getenv("SQLITE_PATH", "/var/data/db.sqlite3")
+# ---------------------------------------------------------------------
+# Base de datos: carpeta escribible dentro del proyecto
+# (en Render: /opt/render/project/src/data)
+# ---------------------------------------------------------------------
+DATA_DIR = BASE_DIR / "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# Crea carpeta sólo si apunta a /var/... (en build de Render aún puede no existir; no es crítico si falla)
-try:
-    if SQLITE_PATH.startswith("/var/"):
-        os.makedirs(os.path.dirname(SQLITE_PATH), exist_ok=True)
-except Exception:
-    pass
+SQLITE_PATH = os.getenv("SQLITE_PATH", str(DATA_DIR / "db.sqlite3"))
 
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": SQLITE_PATH or DEFAULT_SQLITE,
+        "NAME": SQLITE_PATH,
     }
 }
 
-# --- Validadores de contraseña ---
+# ---------------------------------------------------------------------
+# Password validators
+# ---------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -117,20 +119,24 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# --- Internacionalización ---
+# ---------------------------------------------------------------------
+# Internacionalización
+# ---------------------------------------------------------------------
 LANGUAGE_CODE = "es"
-TIME_ZONE = "America/Santiago"  # Chile
+TIME_ZONE = "America/Santiago"
 USE_I18N = True
 USE_TZ = True
 
-# --- Archivos estáticos (Whitenoise + Django 5) ---
+# ---------------------------------------------------------------------
+# Archivos estáticos (WhiteNoise)
+# ---------------------------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STORAGES = {
-    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
-}
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-# --- DRF (opcional) ---
+# ---------------------------------------------------------------------
+# DRF (opcional)
+# ---------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
@@ -138,5 +144,7 @@ REST_FRAMEWORK = {
     ],
 }
 
-# --- Clave primaria por defecto ---
+# ---------------------------------------------------------------------
+# PK por defecto
+# ---------------------------------------------------------------------
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
