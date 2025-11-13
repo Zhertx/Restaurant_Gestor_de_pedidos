@@ -10,28 +10,40 @@ import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Helpers para variables de entorno ---
-def _list_env(name: str, default: str = ""):
+def _list_env(name: str, default: str = "") -> list[str]:
     """Lee una variable de entorno separada por comas y devuelve lista limpia."""
-    v = os.getenv(name, default)
-    return [s.strip() for s in v.split(",") if s.strip()]
+    raw = os.getenv(name, default) or ""
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
 
 # --- Flags / Integraciones (M1/M4) ---
-USE_MOCKS = os.getenv("USE_MOCKS", "True") == "True"  # déjalo True para la demo
+USE_MOCKS = _bool_env("USE_MOCKS", True)  # déjalo True para la demo
 M3_WEBHOOK_SECRET = os.getenv("M3_WEBHOOK_SECRET", "dev-secret")
 
-# Si USE_MOCKS=True, apuntamos M1/M4 a los endpoints locales /mock (o al mismo dominio en cloud)
+# Si USE_MOCKS=True, puedes apuntar M1/M4 a los endpoints locales /mock
 M1_BASE_URL = os.getenv("M1_BASE_URL", "http://127.0.0.1:8000/mock")
 M4_BASE_URL = os.getenv("M4_BASE_URL", "http://127.0.0.1:8000/mock")
 
 # --- Seguridad / Entorno ---
 # ¡No hardcodear claves en producción!
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-DEBUG = os.getenv("DEBUG", "True") == "True"
+DEBUG = _bool_env("DEBUG", True)
 
 # En local: 127.0.0.1,localhost
-# En Render: poner tu dominio, ej: m3-pedidos.onrender.com
+# En Render: poner tu dominio exacto, ej: restaurant-gestor-de-pedidos.onrender.com
 ALLOWED_HOSTS = _list_env("ALLOWED_HOSTS", "127.0.0.1,localhost")
+# En Render usa https://<tu-dominio>
 CSRF_TRUSTED_ORIGINS = _list_env("CSRF_TRUSTED_ORIGINS", "http://127.0.0.1,http://localhost")
+
+# Endurecimiento mínimo cuando no estamos en DEBUG
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 # --- Apps ---
 INSTALLED_APPS = [
@@ -49,7 +61,7 @@ INSTALLED_APPS = [
 # --- Middleware ---
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # importante para archivos estáticos en prod
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # estáticos en prod
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -79,16 +91,23 @@ TEMPLATES = [
 WSGI_APPLICATION = "restaurante.wsgi.application"
 
 # --- DB: usar carpeta escribible en Render (/var/data) ---
+# Fallback local si no existe env.
+DEFAULT_SQLITE = str(BASE_DIR / "db.sqlite3")
 SQLITE_PATH = os.getenv("SQLITE_PATH", "/var/data/db.sqlite3")
-os.makedirs(os.path.dirname(SQLITE_PATH), exist_ok=True)
+
+# Crea carpeta sólo si apunta a /var/... (en build de Render aún puede no existir; no es crítico si falla)
+try:
+    if SQLITE_PATH.startswith("/var/"):
+        os.makedirs(os.path.dirname(SQLITE_PATH), exist_ok=True)
+except Exception:
+    pass
 
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": SQLITE_PATH,
+        "NAME": SQLITE_PATH or DEFAULT_SQLITE,
     }
 }
-
 
 # --- Validadores de contraseña ---
 AUTH_PASSWORD_VALIDATORS = [
@@ -104,12 +123,14 @@ TIME_ZONE = "America/Santiago"  # Chile
 USE_I18N = True
 USE_TZ = True
 
-# --- Archivos estáticos (necesario para prod con Whitenoise) ---
+# --- Archivos estáticos (Whitenoise + Django 5) ---
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STORAGES = {
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
-# --- DRF (opcional, puedes ajustar si quieres paginación/autenticación) ---
+# --- DRF (opcional) ---
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
