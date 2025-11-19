@@ -1,69 +1,88 @@
-# M3 – Sistema de Pedidos (Django + DRF)
+Descripción general
 
-## Resumen
-Módulo de Pedidos del sistema de restaurante. Incluye:
-- CRUD de pedidos.
-- Confirmación con validación de stock (M1).
-- Webhook de Cocina (M4) para marcar pedido `LISTO`.
-- Mocks locales de M1/M4 para demo (`/mock/*`).
+Este proyecto implementa el Módulo 3: Gestión de Pedidos del sistema colaborativo para un restaurante.
+Incluye:
 
-## Requisitos
-- Python 3.11+ (probado también en 3.13)
-- pip
+CRUD de pedidos
 
-## Variables de entorno
-Configura un archivo `.env` (ejemplo en `.env.example`).
+Agregado de platos por pedido
 
-## Instalación rápida (local)
-```bash
-py -m venv .venv
-.venv\Scripts\activate
-py -m pip install -r requirements.txt
-py manage.py migrate
-py manage.py runserver
-Endpoints principales
-GET/POST /api/pedidos/
+Confirmación del pedido con validación automática de stock (Módulo 1)
 
-POST /api/pedidos/{id}/confirmar
+Webhook del Módulo 4 (Cocina) para marcar pedidos como LISTO
 
-PATCH /api/pedidos/{id}/entregar
+Flujo completo: CREADO → EN_PREPARACION → LISTO → ENTREGADO → CERRADO
 
-PATCH /api/pedidos/{id}/cerrar
+Mock de M1 y M4 para pruebas locales sin depender de otros módulos
 
-Webhook cocina: POST /api/webhooks/cocina/pedido-listo
+Interfaz gráfica (UI) para Mesero y Cocina incluida en /ui/
 
-Mocks: POST /mock/stock/validar-reservar, POST /mock/cocina/pedidos
+Todo construido en Django + Django REST Framework.
 
-Pruebas rápidas (curl)
-bash
-Copy code
-# Crear
-curl -X POST http://127.0.0.1:8000/api/pedidos/ \
-  -H "Content-Type: application/json" \
-  -d "{\"mesa\":\"A3\",\"cliente\":\"Juan\"}"
+Arquitectura del módulo
+restaurante/
+│
+├── pedidos/       → API real del módulo 3
+├── ui/            → Interfaz web (Mesero / Cocina)
+├── mock/          → Simulación de M1 y M4 para desarrollo
+├── panel/         → Panel administrativo (demo)
+│
+└── restaurante/   → Settings, URLs, configuración general
 
-# Listar
-curl http://127.0.0.1:8000/api/pedidos/
+Funcionalidades principales
+✔ Gestión de pedidos
 
-# Confirmar (reemplaza {id})
-curl -X POST http://127.0.0.1:8000/api/pedidos/{id}/confirmar
+Crear pedidos (por mesa o cliente)
 
-# Simular cocina -> LISTO (reemplaza {id})
-curl -X POST http://127.0.0.1:8000/api/webhooks/cocina/pedido-listo \
-  -H "Content-Type: application/json" \
-  -d "{\"pedido_id\":\"{id}\",\"estado\":\"LISTO\"}"
-Notas
-Para demo local: USE_MOCKS=True usa /mock como M1/M4.
+Agregar platos al pedido
 
-En cloud: configurar ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS y DEBUG=False.
+Listar pedidos activos y recientes
 
-yaml
-Copy code
+Cerrar / entregar / cancelar pedidos
 
----
+✔ Integración con Menú & Stock (M1)
 
-### .env.example (pega tal cual)
-```env
+Validación de stock con reserva antes de confirmar
+
+✔ Integración con Cocina (M4)
+
+Recibir eventos de cocina vía Webhooks
+
+Acción LISTO para marcar pedido terminado
+
+✔ Mock completo para desarrollo
+
+/mock/stock/validar-reservar
+
+/mock/cocina/pedidos
+
+/mock/cocina/pedido-listo
+
+Permite probar todo el flujo sin depender de otros equipos.
+
+✔ Interfaces gráficas (UI)
+
+/mesero/ – gestión de pedidos
+
+/cocina/ – monitor de cocina
+
+/stock/ – visualización rápida
+
+Estados del pedido
+CREADO → EN_PREPARACION → LISTO → ENTREGADO → CERRADO
+           ↘
+           CANCELADO
+
+⚙️ Requisitos
+
+Python 3.11+ (probado también en 3.13)
+
+pip
+
+🔧 Configuración de entorno
+
+Crea tu archivo .env:
+
 # CORE
 DEBUG=True
 SECRET_KEY=change-me
@@ -75,9 +94,72 @@ USE_MOCKS=True
 M1_BASE_URL=http://127.0.0.1:8000/mock
 M4_BASE_URL=http://127.0.0.1:8000/mock
 M3_WEBHOOK_SECRET=dev-secret
-Luego, commitea y sube:
-bash
-Copy code
-git add README.md .env.example
-git commit -m "docs: README y .env.example"
-git push
+
+🛠 Instalación y ejecución local
+# Crear entorno
+py -m venv .venv
+.venv\Scripts\activate
+
+# Instalar dependencias
+py -m pip install -r requirements.txt
+
+# Migraciones
+py manage.py migrate
+
+# Ejecutar servidor
+py manage.py runserver
+
+
+Abre:
+http://127.0.0.1:8000/mesero/
+http://127.0.0.1:8000/cocina/
+
+📡 Endpoints principales (API real)
+Pedidos
+GET    /api/pedidos/
+POST   /api/pedidos/
+GET    /api/pedidos/{id}/
+PATCH  /api/pedidos/{id}/
+DELETE /api/pedidos/{id}/
+
+Acciones
+POST  /api/pedidos/{id}/confirmar/
+POST  /api/pedidos/{id}/cancelar/
+PATCH /api/pedidos/{id}/listo/
+PATCH /api/pedidos/{id}/entregar/
+PATCH /api/pedidos/{id}/cerrar/
+
+Webhook de Cocina
+POST /api/webhooks/cocina/pedido-listo/
+
+Mocks
+POST /mock/stock/validar-reservar
+POST /mock/cocina/pedidos
+
+Pruebas básicas (curl)
+Crear pedido
+curl -X POST http://127.0.0.1:8000/api/pedidos/ \
+  -H "Content-Type: application/json" \
+  -d "{\"mesa\":\"A3\",\"cliente\":\"Juan\"}"
+
+Listar pedidos
+curl http://127.0.0.1:8000/api/pedidos/
+
+Confirmar pedido
+curl -X POST http://127.0.0.1:8000/api/pedidos/{id}/confirmar/
+
+Simular cocina → pedido listo
+curl -X POST http://127.0.0.1:8000/api/webhooks/cocina/pedido-listo \
+  -H "Content-Type: application/json" \
+  -d "{\"pedido_id\":\"{id}\"}"
+
+Tests automáticos
+
+Incluye tests funcionales del flujo en:
+
+/pedidos/test/
+
+
+Ejecuta:
+
+py manage.py test
