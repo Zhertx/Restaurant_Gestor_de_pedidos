@@ -1,9 +1,13 @@
+# mock/urls.py
 from django.urls import path
-from .views import mock_validar_reservar, mock_liberar, mock_confirmar, mock_cocina_pedidos
+from . import views
+
+app_name = "mock"
 
 urlpatterns = [
-    path("stock/validar-reservar", mock_validar_reservar),
-    path("stock/liberar", mock_liberar),
-    path("stock/confirmar", mock_confirmar),
-    path("cocina/pedidos", mock_cocina_pedidos),
+    path("menu/",                 views.menu,               name="menu"),
+    path("stock/estado/",         views.stock_estado,       name="stock_estado"),
+    path("validar-reservar/",     views.validar_reservar,   name="validar_reservar"),
+    path("liberar/",              views.liberar,            name="liberar"),
+    path("cocina/pedido-listo/",  views.cocina_pedido_listo, name="cocina_pedido_listo"),
 ]

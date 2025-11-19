@@ -1,164 +1,152 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
-from rest_framework.views import APIView
-from django.conf import settings
-from django.shortcuts import get_object_or_404
+from rest_framework import status
 
 from .models import Pedido
-from .serializers import PedidoSerializer, PedidoCreateSerializer
-from .adapters import StockClientM1, CocinaClientM4, build_signature
+from .serializers import PedidoSerializer
 
-import hmac
 
-class PedidoViewSet(viewsets.ModelViewSet):
-    queryset = Pedido.objects.all().order_by("-creado_en")
+class PedidoViewSet(ModelViewSet):
+    """
+    API de Pedidos.
+
+    Endpoints generados automáticamente por el router:
+    - GET    /api/pedidos/           -> list
+    - POST   /api/pedidos/           -> create
+    - GET    /api/pedidos/{id}/      -> retrieve
+    - PUT    /api/pedidos/{id}/      -> update
+    - PATCH  /api/pedidos/{id}/      -> partial_update
+    - DELETE /api/pedidos/{id}/      -> destroy
+
+    Acciones personalizadas:
+    - POST   /api/pedidos/{id}/confirmar/
+    - POST   /api/pedidos/{id}/cancelar/
+    - PATCH  /api/pedidos/{id}/listo/
+    - PATCH  /api/pedidos/{id}/entregar/
+    - PATCH  /api/pedidos/{id}/cerrar/
+    """
+
+    queryset = Pedido.objects.all()
     serializer_class = PedidoSerializer
-
-    def get_serializer_class(self):
-        # Usa tu serializer de creación cuando corresponda
-        if getattr(self, "action", None) == "create":
-            return PedidoCreateSerializer
-        return super().get_serializer_class()
-
-    def create(self, request, *args, **kwargs):
-        # Crea pedido con tu serializer de creación
-        ser = self.get_serializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        pedido = Pedido.objects.create(**ser.validated_data)
-        return Response(PedidoSerializer(pedido).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
     def confirmar(self, request, pk=None):
         """
-        Paso 1: validar/reservar en M1
-        Paso 2: enviar a M4
-        Si falla M1 -> 400/502; si falla M4 -> liberar reserva y revertir a CREADO.
+        Confirma el pedido: valida stock (Módulo 1) y lo pasa a EN_PREPARACION.
         """
         pedido = self.get_object()
-        if pedido.estado != "CREADO":
-            return Response({"detail": "Solo pedidos CREADO se pueden confirmar."}, status=400)
-
-        if not pedido.items:
-            return Response({"detail": "El pedido no tiene items."}, status=400)
-
-        m1 = StockClientM1()
-        m4 = CocinaClientM4()
-
-        # 1) Validar/Reservar stock en M1
         try:
-            resp = m1.validar_reservar(pedido.id, pedido.items)
+            pedido.confirmar()  # método del modelo
+            serializer = self.get_serializer(pedido)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"detail": f"Error contactando M1: {e}"}, status=502)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not resp.get("ok"):
-            return Response({"detail": resp.get("error", "Sin stock disponible")}, status=400)
-
-        pedido.reserva_id = resp.get("reserva_id")
-        pedido.estado = "EN_PREPARACION"
-        pedido.save()
-
-        # 2) Enviar a cocina (M4)
+    @action(detail=True, methods=["post"])
+    def cancelar(self, request, pk=None):
+        """
+        Cancela el pedido y libera el stock reservado.
+        """
+        pedido = self.get_object()
         try:
-            m4.enviar_pedido(pedido)
+            pedido.cancelar()  # método del modelo
+            serializer = self.get_serializer(pedido)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
-            # liberar reserva si falla el envío a M4
-            try:
-                if pedido.reserva_id:
-                    m1.liberar_reserva(pedido.reserva_id)
-            except:
-                pass
-            pedido.reserva_id = None
-            pedido.estado = "CREADO"
-            pedido.save()
-            return Response({"detail": f"Error enviando a M4: {e}"}, status=502)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(PedidoSerializer(pedido).data, status=200)
+    @action(detail=True, methods=["patch"])
+    def listo(self, request, pk=None):
+        """
+        Marca el pedido como LISTO desde la cocina.
+
+        Este endpoint lo llama el webhook:
+          POST /api/webhooks/cocina/pedido-listo/
+        que internamente hace PATCH a:
+          /api/pedidos/{id}/listo/
+        """
+        pedido = self.get_object()
+        try:
+            pedido.marcar_listo()  # método del modelo
+            serializer = self.get_serializer(pedido)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["patch"])
     def entregar(self, request, pk=None):
+        """
+        Marca el pedido como ENTREGADO al cliente.
+        """
         pedido = self.get_object()
-        if pedido.estado != "LISTO":
-            return Response({"detail": "Solo pedidos LISTO pueden pasar a ENTREGADO."}, status=400)
-        pedido.estado = "ENTREGADO"
-        pedido.save()
-        return Response(PedidoSerializer(pedido).data)
+        try:
+            pedido.entregar()  # método del modelo
+            serializer = self.get_serializer(pedido)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["patch"])
     def cerrar(self, request, pk=None):
         """
-        Confirma descuento definitivo en M1 y pasa a CERRADO.
+        Cierra el pedido (venta finalizada).
         """
         pedido = self.get_object()
-        if pedido.estado != "ENTREGADO":
-            return Response({"detail": "Solo pedidos ENTREGADO pueden pasar a CERRADO."}, status=400)
-        if not pedido.reserva_id:
-            return Response({"detail": "No hay reserva asociada."}, status=400)
-
-        m1 = StockClientM1()
         try:
-            resp = m1.confirmar_descuento(pedido.reserva_id)
+            pedido.cerrar()  # método del modelo
+            serializer = self.get_serializer(pedido)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
-            return Response({"detail": f"Error confirmando descuento en M1: {e}"}, status=502)
-
-        if not resp.get("ok", True):
-            return Response({"detail": resp.get("error", "No se pudo confirmar stock")}, status=400)
-
-        pedido.estado = "CERRADO"
-        pedido.save()
-        return Response(PedidoSerializer(pedido).data)
-
-    @action(detail=True, methods=["post", "patch"])
-    def cancelar(self, request, pk=None):
-        """
-        Cancela el pedido y libera la reserva en M1 si existía.
-        """
-        pedido = self.get_object()
-        if pedido.estado in ("CERRADO", "CANCELADO"):
-            return Response({"detail": "Pedido ya finalizado."}, status=400)
-
-        if pedido.reserva_id:
-            m1 = StockClientM1()
-            try:
-                m1.liberar_reserva(pedido.reserva_id)
-            except:
-                # se registra en logs si quieres, pero no bloquea la cancelación
-                pass
-
-        pedido.estado = "CANCELADO"
-        pedido.reserva_id = None
-        pedido.save()
-        return Response(PedidoSerializer(pedido).data, status=200)
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class WebhookCocinaReady(APIView):
+@api_view(["POST"])
+def cocina_estado(request):
     """
-    Webhook para que M4 notifique 'LISTO'
-    POST /api/webhooks/cocina/pedido-listo
-    Header: X-Signature: hmac_sha256(body, M3_WEBHOOK_SECRET)
-    Body:   {"pedido_id":"<uuid>","estado":"LISTO"}
+    Cambia el estado desde la 'pantalla de cocina'.
+    body: { "pedido_id": "<uuid>", "estado": "EN_PREPARACION|LISTO|CANCELADO" }
     """
-    authentication_classes = []
-    permission_classes = []
+    pid = request.data.get("pedido_id")
+    estado = request.data.get("estado")
+    if not pid or not estado:
+        return Response(
+            {"detail": "pedido_id y estado son requeridos."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    def post(self, request):
-        sig = request.headers.get("X-Signature")
-        body_bytes = request.body or b""
+    try:
+        p = Pedido.objects.get(pk=pid)
+        if estado == "EN_PREPARACION":
+            if p.estado != Pedido.Estado.CREADO:
+                return Response(
+                    {"detail": "Solo desde CREADO."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            p.estado = Pedido.Estado.EN_PREPARACION
+            p.full_clean()
+            p.save(update_fields=["estado", "actualizado_en"])
+        elif estado == "LISTO":
+            p.marcar_listo()
+        elif estado == "CANCELADO":
+            p.cancelar()
+        else:
+            return Response({"detail": "Estado inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
-        expected = build_signature(settings.M3_WEBHOOK_SECRET, body_bytes)
-        if not sig or not hmac.compare_digest(sig, expected):
-            return Response({"detail": "Firma inválida"}, status=401)
+        return Response(PedidoSerializer(p).data)
+    except Pedido.DoesNotExist:
+        return Response({"detail": "Pedido no existe."}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        pedido_id = request.data.get("pedido_id")
-        estado = request.data.get("estado")
 
-        if estado != "LISTO":
-            return Response({"detail": "Estado no soportado"}, status=400)
-
-        pedido = get_object_or_404(Pedido, pk=pedido_id)
-        if pedido.estado != "EN_PREPARACION":
-            return Response({"detail": "Pedido no está en preparación"}, status=400)
-
-        pedido.estado = "LISTO"
-        pedido.save()
-        return Response({"ok": True})
+@api_view(["GET"])
+def cocina_list(request):
+    """
+    Devuelve pedidos activos para visualizar en la cocina.
+    (excluye CANCELADO y CERRADO)
+    """
+    activos = Pedido.objects.exclude(
+        estado__in=[Pedido.Estado.CANCELADO, Pedido.Estado.CERRADO]
+    ).order_by("creado_en")
+    return Response(PedidoSerializer(activos, many=True).data)
