@@ -150,3 +150,45 @@ def cocina_list(request):
         estado__in=[Pedido.Estado.CANCELADO, Pedido.Estado.CERRADO]
     ).order_by("creado_en")
     return Response(PedidoSerializer(activos, many=True).data)
+from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
+from .forms import PedidoPublicoForm
+from .models import Pedido, PedidoImagen
+from django.views.decorators.http import require_http_methods
+from django.contrib import messages
+
+@require_http_methods(["GET", "POST"])
+def formulario_publico(request, producto_pk=None):
+    """
+    Formulario público para crear un pedido desde la web.
+    Si se envía POST: crea Pedido, guarda imágenes y redirige a seguimiento.
+    """
+    initial = {}
+    if producto_pk:
+        initial['producto'] = producto_pk
+
+    if request.method == 'POST':
+        form = PedidoPublicoForm(request.POST, request.FILES, initial=initial)
+        if form.is_valid():
+            pedido = form.save(commit=False)
+            pedido.plataforma = 'web'
+            pedido.estado = 'solicitado'
+            pedido.estado_pago = 'pendiente'
+            pedido.save()
+
+            archivos = request.FILES.getlist('imagenes')
+            for f in archivos:
+                PedidoImagen.objects.create(pedido=pedido, imagen=f)
+
+            messages.success(request, 'Pedido creado correctamente.')
+            return redirect('pedidos:seguimiento', token=pedido.token)
+        else:
+            messages.error(request, 'Corrige los errores del formulario.')
+    else:
+        form = PedidoPublicoForm(initial=initial)
+
+    return render(request, 'pedidos/form_publico.html', {'form': form})
+    def seguimiento_pedido(request, token):
+    pedido = get_object_or_404(Pedido, token=token)
+    return render(request, 'pedidos/seguimiento.html', {'pedido': pedido})
+
