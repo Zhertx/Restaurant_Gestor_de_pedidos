@@ -43,9 +43,13 @@
 
                   {# Pedido ya confirmado: Cocina decide si hay stock o si lo deja listo #}
                   {% elif p.estado == "EN_PREPARACION" %}
-                    <a href="{% url 'ui:cocina_listo' p.id %}" class="btn btn-success btn-sm">
-                      Pedido listo
-                    </a>
+                    <form method="post" action="{% url 'ui:cocina_listo' p.id %}">
+  {% csrf_token %}
+  <button class="btn btn-success btn-sm">
+    Pedido listo
+  </button>
+</form>
+
                     <a class="btn btn-sm btn-outline-danger"
                        href="{% url 'ui:cocina_sin_ingredientes' p.id %}">
                       Sin ingredientes
