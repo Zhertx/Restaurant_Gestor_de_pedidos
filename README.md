@@ -1,3 +1,13 @@
+## Historial de cambios
+
+### [2025-12-14]
+- Implementación de vista de cocina
+- Acciones de pedidos desde cocina (en preparación / listo)
+- Vista de stock consumiendo API externa
+- Correcciones en flujo de estados de pedidos
+
+
+
 Descripción general
 
 Este proyecto implementa el Módulo 3: Gestión de Pedidos del sistema colaborativo para un restaurante.
