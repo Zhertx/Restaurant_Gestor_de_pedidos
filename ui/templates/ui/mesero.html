@@ -1,5 +1,4 @@
 {% extends "panel/base.html" %}
-{% load static %}
 {% block title %}Mesero - M3{% endblock %}
 
 {% block content %}
@@ -12,93 +11,104 @@
 {% endif %}
 
 <div class="row g-4">
-  <!-- Crear pedido -->
+
+  <!-- CREAR PEDIDO -->
   <div class="col-lg-4">
     <div class="card shadow-sm">
       <div class="card-header">Crear pedido</div>
       <div class="card-body">
         <form method="post" action="{% url 'ui:crear_pedido' %}">
           {% csrf_token %}
+
+          <!-- MESA -->
           <div class="mb-2">
             <label class="form-label">Mesa</label>
-            <input name="mesa" class="form-control" placeholder="Ej: A3, 7, etc." required>
-          </div>
-          <div class="mb-2">
-            <label class="form-label">Cliente</label>
-            <input name="cliente" class="form-control" placeholder="Nombre del cliente" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Plato</label>
-            <select name="plato" class="form-select" required>
-              <option value="" disabled selected>— Selecciona un plato —</option>
-              {% for pl in platos %}
-                <option value="{{ pl.codigo }}">{{ pl.nombre }}</option>
+            <select name="mesa" class="form-select" required>
+              <option value="">— Selecciona mesa —</option>
+              {% for m in mesas %}
+                <option value="{{ m.numero }}">
+                  Mesa {{ m.numero }} ({{ m.capacidad }} personas)
+                </option>
               {% endfor %}
             </select>
           </div>
-          <button class="btn btn-primary w-100">Crear</button>
+
+          <!-- CLIENTE -->
+          <div class="mb-2">
+            <label class="form-label">Cliente</label>
+            <input name="cliente" class="form-control" required>
+          </div>
+
+          <!-- PLATO -->
+          <div class="mb-3">
+            <label class="form-label">Plato</label>
+            <select name="plato" class="form-select" required>
+              <option value="">— Selecciona un plato —</option>
+              {% for p in platos %}
+                <option value="{{ p.id }}">
+                  {{ p.nombre }} — ${{ p.precio }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <button class="btn btn-primary w-100">Crear pedido</button>
         </form>
       </div>
     </div>
   </div>
 
-  <!-- Listado pedidos -->
+  <!-- LISTADO PEDIDOS -->
   <div class="col-lg-8">
     <div class="card shadow-sm">
       <div class="card-header">Pedidos activos y recientes</div>
       <div class="card-body">
+
         {% if pedidos %}
-          <div class="table-responsive">
-            <table class="table align-middle">
-              <thead>
-                <tr>
-                  <th>Mesa</th>
-                  <th>Cliente</th>
-                  <th>Plato</th>
-                  <th>Estado</th>
-                  <th>Creado</th>
-                  <th>Actualizado</th>
-                  <th style="width:260px">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for p in pedidos %}
-                  <tr>
-                    <td><strong>{{ p.mesa|default:"-" }}</strong></td>
-                    <td>{{ p.cliente|default:"-" }}</td>
-                    <td>{{ p.plato_nombre|default:p.plato }}</td>
-                    <td>
-                      <span class="badge bg-secondary">{{ p.estado }}</span>
-                      {% if p.estado == "ENTREGADO" %}
-                        <div class="small text-muted">Entregado: {{ p.actu_str }}</div>
-                      {% endif %}
-                    </td>
-                    <td>{{ p.creado_str }}</td>
-                    <td>{{ p.actu_str }}</td>
-                    <td class="d-flex flex-wrap gap-1">
-                      {% if p.estado == "CREADO" %}
-                        <a class="btn btn-sm btn-outline-success" href="{% url 'ui:confirmar' p.id %}">Confirmar</a>
-                        <a class="btn btn-sm btn-outline-danger"  href="{% url 'ui:cancelar'  p.id %}">Cancelar</a>
-                      {% elif p.estado == "EN_PREPARACION" %}
-                        <span class="text-muted small">Esperando “LISTO” de Cocina…</span>
-                      {% elif p.estado == "LISTO" %}
-                        <a class="btn btn-sm btn-primary"       href="{% url 'ui:entregar'  p.id %}">Entregar</a>
-                      {% elif p.estado == "ENTREGADO" %}
-                        <a class="btn btn-sm btn-dark"           href="{% url 'ui:cerrar'    p.id %}">Cerrar</a>
-                      {% else %}
-                        <span class="text-muted small">Sin acciones</span>
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>Mesa</th>
+                <th>Cliente</th>
+                <th>Plato</th>
+                <th>Estado</th>
+                <th>Creado</th>
+                <th>Actualizado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in pedidos %}
+              <tr>
+                <td><strong>Mesa {{ p.mesa }}</strong></td>
+                <td>{{ p.cliente }}</td>
+                <td>{{ p.plato_nombre }}</td>
+                <td><span class="badge bg-secondary">{{ p.estado }}</span></td>
+                <td>{{ p.creado_str }}</td>
+                <td>{{ p.actu_str }}</td>
+                <td class="d-flex gap-1 flex-wrap">
+                  {% if p.estado == "CREADO" %}
+                    <a class="btn btn-sm btn-outline-success" href="{% url 'ui:confirmar' p.id %}">Confirmar</a>
+                    <a class="btn btn-sm btn-outline-danger" href="{% url 'ui:cancelar' p.id %}">Cancelar</a>
+                  {% elif p.estado == "LISTO" %}
+                    <a class="btn btn-sm btn-primary" href="{% url 'ui:entregar' p.id %}">Entregar</a>
+                  {% elif p.estado == "ENTREGADO" %}
+                    <a class="btn btn-sm btn-dark" href="{% url 'ui:cerrar' p.id %}">Cerrar</a>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
         {% else %}
-          <p class="text-muted mb-0">No hay pedidos aún.</p>
+          <p class="text-muted">No hay pedidos aún.</p>
         {% endif %}
+
       </div>
     </div>
   </div>
+
 </div>
 {% endblock %}

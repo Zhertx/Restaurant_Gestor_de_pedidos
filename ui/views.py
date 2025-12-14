@@ -2,237 +2,204 @@
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
-from django.urls import reverse
-from django.utils.timezone import localtime
 import requests
 import datetime
+from django.utils.timezone import localtime
 
-# ====== Datos de demo (menu + inventario) ======
-PLATOS = [
-    {"codigo": "HAMB_CARNE",  "nombre": "Hamburguesa de carne",  "ingredientes": ["pan", "carne", "lechuga"]},
-    {"codigo": "HAMB_POLLO",  "nombre": "Hamburguesa de pollo",  "ingredientes": ["pan", "pollo", "lechuga"]},
-    {"codigo": "FIDEOS_CARNE","nombre": "Fideos con carne",      "ingredientes": ["fideos", "carne"]},
-    {"codigo": "FIDEOS_POLLO","nombre": "Fideos con pollo",      "ingredientes": ["fideos", "pollo"]},
-    {"codigo": "ENSALADA",    "nombre": "Ensalada clásica",      "ingredientes": ["lechuga"]},
-    {"codigo": "HOTDOG",      "nombre": "Hot Dog",               "ingredientes": ["pan"]},
-]
-
-INVENTARIO = {
-    "pan": 200, "carne": 120, "pollo": 110, "lechuga": 160, "fideos": 180,
-    "tomate": 150, "queso": 140, "cebolla": 130, "mayonesa": 100, "ketchup": 100,
-    "mostaza": 90, "pepino": 90, "aji": 80, "papas": 200, "arroz": 200,
-}
+# ================== APIS ==================
+MESAS_API  = "https://sistema-gestion-restaurant.up.railway.app/api/mesas/"
+PLATOS_API = "https://web-production-2d3fb.up.railway.app/api/platos/"
 
 ESTADOS_ACTIVOS = {"CREADO", "EN_PREPARACION", "LISTO", "ENTREGADO"}
 
+# ================== HELPERS ==================
+def _load_mesas():
+    r = requests.get(MESAS_API, timeout=10)
+    r.raise_for_status()
+    return r.json().get("results", [])
 
-# ----------------- Helpers -----------------
-def _api_base(request) -> str:
-    return request.build_absolute_uri("/").rstrip("/")
-
-def _abs(request, path: str) -> str:
-    if not path.startswith("/"):
-        path = "/" + path
-    return f"{_api_base(request)}{path}"
-
-def _ensure_slash(url: str) -> str:
-    return url if url.endswith("/") else url + "/"
-
-def _api_get(request, path):
-    return requests.get(_abs(request, path), timeout=10)
-
-def _api_post(request, path, json=None):
-    return requests.post(_ensure_slash(_abs(request, path)), json=(json or {}), timeout=10)
-
-def _api_patch(request, path, json=None):
-    return requests.patch(_ensure_slash(_abs(request, path)), json=(json or {}), timeout=10)
-
-def _nombre_plato(codigo: str) -> str:
-    for p in PLATOS:
-        if p["codigo"] == codigo:
-            return p["nombre"]
-    return codigo or "-"
-
-def _fmt_hhmm(iso_str: str) -> str:
-    """
-    Espera un ISO 8601 (con zona o naive). Si falla, devuelve tal cual.
-    """
-    if not iso_str:
-        return "—"
-    try:
-        # Django/DRF suelen devolver ISO con zona: 2025-11-13T22:07:29.141797-03:00
-        dt = datetime.datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        dt = localtime(dt) if dt.tzinfo else dt
-        return dt.strftime("%d/%m %H:%M")
-    except Exception:
-        return iso_str
-
-def _enriquecer_pedido(p):
-    """
-    Agrega campos listos para la UI: plato legible, fechas formateadas.
-    No rompe si el API cambia nombres (usa .get).
-    """
-    p = dict(p)  # copia
-    p["plato_nombre"] = _nombre_plato(p.get("plato"))
-    p["creado_str"] = _fmt_hhmm(p.get("creado_en") or p.get("creado"))
-    p["actu_str"]    = _fmt_hhmm(p.get("actualizado_en") or p.get("actualizado"))
-    return p
+def _load_platos():
+    r = requests.get(PLATOS_API, timeout=10)
+    r.raise_for_status()
+    data = r.json().get("results", [])
+    return [p for p in data if p.get("activo")]
 
 def _load_pedidos(request):
-    r = _api_get(request, "/api/pedidos/")
+    r = requests.get(
+        request.build_absolute_uri("/api/pedidos/"),
+        timeout=10
+    )
     r.raise_for_status()
-    data = r.json() or []
-    # Si el API devuelve {"results":[...]}, tomar results
+    data = r.json()
     if isinstance(data, dict) and "results" in data:
         data = data["results"]
-    return [_enriquecer_pedido(item) for item in data]
+    return data
 
-def _mesa_tiene_activo(pedidos, mesa_num):
+def _mesa_ocupada(pedidos, mesa_num):
     for p in pedidos:
-        if str(p.get("mesa")) == str(mesa_num) and p.get("estado") in ESTADOS_ACTIVOS and p.get("estado") != "CANCELADO":
+        if str(p.get("mesa")) == str(mesa_num) and p.get("estado") in ESTADOS_ACTIVOS:
             return True
     return False
 
+def _fmt_fecha(iso):
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        dt = localtime(dt) if dt.tzinfo else dt
+        return dt.strftime("%d/%m %H:%M")
+    except Exception:
+        return iso
 
-# ----------------- MESERO -----------------
+# ================== MESERO ==================
 def mesero(request):
     try:
         pedidos = _load_pedidos(request)
+        mesas = _load_mesas()
+        platos = _load_platos()
     except Exception as e:
-        pedidos = []
-        messages.error(request, f"No se pudieron cargar pedidos: {e}")
+        messages.error(request, f"Error cargando datos: {e}")
+        pedidos, mesas, platos = [], [], []
 
-    ctx = {"pedidos": pedidos, "platos": PLATOS, "inventario": INVENTARIO}
-    return render(request, "ui/mesero.html", ctx)
+    # Enriquecer pedidos
+    platos_dict = {str(p["id"]): p["nombre"] for p in platos}
+    for p in pedidos:
+        p["plato_nombre"] = platos_dict.get(str(p.get("plato")), p.get("plato"))
+        p["creado_str"] = _fmt_fecha(p.get("creado_en"))
+        p["actu_str"] = _fmt_fecha(p.get("actualizado_en"))
+
+    # Marcar mesas ocupadas
+    mesas_disponibles = []
+    for m in mesas:
+        if not _mesa_ocupada(pedidos, m["numero"]) and m["estado"] == "disponible":
+            mesas_disponibles.append(m)
+
+    context = {
+        "pedidos": pedidos,
+        "mesas": mesas_disponibles,
+        "platos": platos,
+    }
+    return render(request, "ui/mesero.html", context)
 
 @require_http_methods(["POST"])
 def crear_pedido(request):
-    mesa    = (request.POST.get("mesa") or "").strip()
-    cliente = (request.POST.get("cliente") or "").strip()
-    plato   = (request.POST.get("plato") or "").strip()
+    mesa    = request.POST.get("mesa")
+    cliente = request.POST.get("cliente", "").strip()
+    plato   = request.POST.get("plato")
 
     if not mesa or not cliente or not plato:
-        messages.warning(request, "Debes ingresar mesa, cliente y seleccionar un plato.")
+        messages.error(request, "Todos los campos son obligatorios.")
         return redirect("ui:mesero")
 
     try:
         pedidos = _load_pedidos(request)
-        if _mesa_tiene_activo(pedidos, mesa):
-            messages.error(request, f"La mesa {mesa} ya tiene un pedido activo.")
+        if _mesa_ocupada(pedidos, mesa):
+            messages.error(request, f"La mesa {mesa} ya está ocupada.")
             return redirect("ui:mesero")
     except Exception as e:
         messages.error(request, f"No se pudo validar la mesa: {e}")
         return redirect("ui:mesero")
 
     try:
-        body = {"mesa": mesa, "cliente": cliente, "plato": plato}
-        r = _api_post(request, "/api/pedidos/", json=body)
+        body = {
+            "mesa": mesa,
+            "cliente": cliente,
+            "plato": plato
+        }
+        r = requests.post(
+            request.build_absolute_uri("/api/pedidos/"),
+            json=body,
+            timeout=10
+        )
         if r.status_code in (200, 201):
-            messages.success(request, f"Pedido para mesa {mesa} creado.")
+            messages.success(request, f"Pedido creado para mesa {mesa}.")
         else:
-            messages.error(request, f"No se pudo crear (HTTP {r.status_code}).")
+            messages.error(request, f"Error al crear pedido (HTTP {r.status_code}).")
     except Exception as e:
-        messages.error(request, f"Error al crear: {e}")
+        messages.error(request, f"Error creando pedido: {e}")
 
     return redirect("ui:mesero")
 
+# ================== ACCIONES ==================
 def accion_confirmar(request, pedido_id):
-    try:
-        r = _api_post(request, f"/api/pedidos/{pedido_id}/confirmar")
-        if r.status_code == 200:
-            messages.success(request, "Pedido confirmado (EN_PREPARACION).")
-        else:
-            messages.error(request, f"No se pudo confirmar (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.post(request.build_absolute_uri(f"/api/pedidos/{pedido_id}/confirmar/"))
     return redirect("ui:mesero")
 
 def accion_cancelar(request, pedido_id):
-    try:
-        r = _api_post(request, f"/api/pedidos/{pedido_id}/cancelar")
-        if r.status_code == 200:
-            messages.info(request, "Pedido cancelado (stock liberado).")
-        else:
-            messages.error(request, f"No se pudo cancelar (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.post(request.build_absolute_uri(f"/api/pedidos/{pedido_id}/cancelar/"))
     return redirect("ui:mesero")
 
 def accion_entregar(request, pedido_id):
-    try:
-        r = _api_patch(request, f"/api/pedidos/{pedido_id}/entregar")
-        if r.status_code == 200:
-            messages.success(request, "Pedido marcado como ENTREGADO.")
-        else:
-            messages.error(request, f"No se pudo entregar (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.patch(request.build_absolute_uri(f"/api/pedidos/{pedido_id}/entregar/"))
     return redirect("ui:mesero")
 
 def accion_cerrar(request, pedido_id):
-    try:
-        r = _api_patch(request, f"/api/pedidos/{pedido_id}/cerrar")
-        if r.status_code == 200:
-            messages.success(request, "Pedido CERRADO.")
-        else:
-            messages.error(request, f"No se pudo cerrar (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.patch(request.build_absolute_uri(f"/api/pedidos/{pedido_id}/cerrar/"))
     return redirect("ui:mesero")
 
-
-# ----------------- COCINA -----------------
 def cocina(request):
     try:
         pedidos = _load_pedidos(request)
+        platos = _load_platos()
     except Exception as e:
-        pedidos = []
-        messages.error(request, f"No se pudieron cargar pedidos: {e}")
+        messages.error(request, f"Error cargando pedidos: {e}")
+        return render(request, "ui/cocina.html", {"pedidos": []})
 
-    ctx = {"pedidos": pedidos}
-    return render(request, "ui/cocina.html", ctx)
+    # Enriquecer pedidos
+    platos_dict = {str(p["id"]): p["nombre"] for p in platos}
+    pedidos_cocina = []
 
+    for p in pedidos:
+        if p.get("estado") in ("CREADO", "EN_PREPARACION"):
+            p["plato_nombre"] = platos_dict.get(str(p.get("plato")), p.get("plato"))
+            p["creado_str"] = _fmt_fecha(p.get("creado_en"))
+            p["actu_str"] = _fmt_fecha(p.get("actualizado_en"))
+            pedidos_cocina.append(p)
+
+    return render(request, "ui/cocina.html", {
+        "pedidos": pedidos_cocina
+    })
+
+
+
+@require_http_methods(["POST"])
 def cocina_en_preparacion(request, pedido_id):
-    try:
-        r = _api_post(request, f"/api/pedidos/{pedido_id}/confirmar")
-        if r.status_code == 200:
-            messages.success(request, "Pedido EN_PREPARACION.")
-        else:
-            messages.error(request, f"No se pudo cambiar estado (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.patch(
+        request.build_absolute_uri(f"/api/pedidos/{pedido_id}/en-preparacion/")
+    )
     return redirect("ui:cocina")
 
+
+@require_http_methods(["POST"])
 def cocina_sin_ingredientes(request, pedido_id):
-    try:
-        r = _api_post(request, f"/api/pedidos/{pedido_id}/cancelar")
-        if r.status_code == 200:
-            messages.info(request, "Cocina: sin ingredientes, pedido CANCELADO.")
-        else:
-            messages.error(request, f"No se pudo cancelar (HTTP {r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    requests.post(
+        request.build_absolute_uri(f"/api/pedidos/{pedido_id}/cancelar/")
+    )
     return redirect("ui:cocina")
 
+
+
+@require_http_methods(["POST"])
+@require_http_methods(["POST"])
 def cocina_listo(request, pedido_id):
-    """
-    Llama al webhook de cocina para marcar LISTO.
-    Este endpoint se publica en /api/webhooks/cocina/pedido-listo/ (mock).
-    """
-    try:
-        body = {"pedido_id": str(pedido_id)}
-        r = _api_post(request, "/api/webhooks/cocina/pedido-listo", json=body)
-        if r.status_code in (200, 204):
-            messages.success(request, "Cocina: pedido LISTO para entregar.")
-        else:
-            messages.error(request, f"No se pudo marcar listo (HTTP {r.status_code}/{r.status_code}).")
-    except Exception as e:
-        messages.error(request, f"Error: {e}")
+    r = requests.patch(
+        request.build_absolute_uri(f"/api/pedidos/{pedido_id}/listo/")
+    )
+    if r.status_code not in (200, 204):
+        messages.error(
+            request,
+            f"No se pudo marcar el pedido como listo (HTTP {r.status_code})."
+        )
     return redirect("ui:cocina")
 
 
-# ----------------- STOCK (demo) -----------------
 def stock(request):
-    # Si en el futuro lees stock real desde /api/stock/, puedes adaptarlo aquí.
-    ctx = {"inventario": INVENTARIO}
-    return render(request, "ui/stock.html", ctx)
+    try:
+        platos = _load_platos()
+    except Exception as e:
+        messages.error(request, f"Error cargando stock: {e}")
+        platos = []
+
+    return render(request, "ui/stock.html", {
+        "platos": platos
+    })
