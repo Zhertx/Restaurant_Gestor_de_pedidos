@@ -11,3 +11,13 @@ urlpatterns = [
 ]
 
 urlpatterns += router.urls
+from django.urls import path
+from . import views
+
+app_name = 'pedidos'
+
+urlpatterns = [
+    path('solicitar/', views.formulario_publico, name='form_publico'),
+    path('solicitar/<int:producto_pk>/', views.formulario_publico, name='form_publico_producto'),
+    path('seguimiento/<str:token>/', views.seguimiento_pedido, name='seguimiento'),
+]
